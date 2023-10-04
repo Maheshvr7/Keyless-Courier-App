@@ -1,0 +1,90 @@
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
+import java.util.regex.Matcher
+import java.util.regex.Pattern
+
+def checkIfFileHasExtension(String value, List<String> extn) {
+    boolean isFile = false
+    extn.each {
+        if (value.toLowerCase().contains(it)){
+            isFile = true
+        }
+    }
+    return isFile
+}
+
+/* Get current product flavour name from the command */
+def getCurrentFlavor() {
+    Gradle gradle = getGradle()
+    String tskReqStr = gradle.getStartParameter().getTaskRequests().toString()
+    def pattern = ~/([Gg])roovy/
+
+    /* Commands for building app are "assemble{Flavour_Name}Release" , assemble{Flavour_Name}Debug",
+    bundle{Flavour_Name}Release , bundle{Flavour_Name}Debug,
+    react-native run-android --variant={Flavour_Name}Release , react-native run-android --variant={Flavour_Name}Debug.  
+    We will extract flavourname from these commands.
+    */
+    if( tskReqStr.contains( "assemble" ) )
+        pattern = Pattern.compile("assemble(\\w+)(Release|Debug)")
+    else if( tskReqStr.contains( "install" ) )
+        pattern = Pattern.compile("install(\\w+)(Release|Debug)")
+    else if( tskReqStr.contains( "bundle" ) )
+        pattern = Pattern.compile("bundle(\\w+)(Release|Debug)")
+
+    Matcher matcher = pattern.matcher( tskReqStr )
+    if( matcher.find() )
+        return matcher.group(1).toLowerCase()
+    else
+    {
+        return 'development'
+    }
+}
+
+task createJS() {
+    println "Creating JavaScript constants file for deployment target specific assets"
+
+    String currentFlavor = getCurrentFlavor()
+    File javascriptFile = file('../../app/TargetConfig.js')
+    javascriptFile.write('export const TargetConfig = { \n')
+    File envFile = file('../../app/DeploymentConstants/'+ currentFlavor + '.env')
+    envFile.readLines().each {
+        if(it != ""){
+            if(checkIfFileHasExtension (it,['.png','.jpg','.jpeg','.json'])){
+                javascriptFile.append(it.replaceFirst('=',': require(')+'),\n')
+
+                if(checkIfFileHasExtension (it,['.png','.jpg','.jpeg'])){
+
+                    String key  = it.substring( 0,it.indexOf("=") - 1  )
+                    String imagePath = it.substring( it.indexOf("=") +1  ).replace("\"",'').replaceFirst(".",'')
+                    String imageName = imagePath.substring( imagePath.lastIndexOf("/")+1 )
+
+                    String pathToSource = "../app/" + imagePath
+                    String pathToTarget = "./app/src/main/assets/"+imageName
+
+                    Path sourceFile = Paths.get(pathToSource)
+                    Path targetFile = Paths.get(pathToTarget)
+
+                    try {
+
+                        Files.copy(
+                                sourceFile,
+                                targetFile,
+                                StandardCopyOption.REPLACE_EXISTING
+                        );
+
+                    } catch (IOException ex) {
+                       println "I/O Error when copying file"
+                    }
+                    javascriptFile.append(key + 'FileName : \'' + imageName + ',\n')
+
+                }
+            }
+            else {
+                javascriptFile.append(it.replaceFirst('=', ':') + ',\n')
+            }
+        }
+    }
+    javascriptFile.append('}')
+}
